@@ -24,6 +24,10 @@ queue_t *lf_spsc_create(size_t capacity) {
     return NULL;
   }
 
+  if ((capacity & (capacity - 1)) != 0) {
+    return NULL; // not a power of two
+  }
+
   queue_t *q = malloc(sizeof(queue_t));
   if (!q) {
     return NULL;
@@ -93,7 +97,7 @@ int lf_spsc_pop(queue_t *q, int *item) {
   }
 
   *item = impl->buffer[tail & (impl->capacity - 1)];
-  impl->buffer[tail] = 0;
+  impl->buffer[tail & (impl->capacity - 1)] = 0;
   atomic_store_explicit(&impl->head, tail + 1, memory_order_release);
   return 0;
 }

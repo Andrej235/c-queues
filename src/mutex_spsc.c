@@ -27,6 +27,10 @@ queue_t *mutex_spsc_create(size_t capacity) {
     return NULL;
   }
 
+  if ((capacity & (capacity - 1)) != 0) {
+    return NULL; // not a power of two
+  }
+
   queue_t *q = malloc(sizeof(queue_t));
   if (!q) {
     return NULL;
@@ -89,7 +93,7 @@ int mutex_spsc_push(queue_t *q, int item) {
   }
 
   impl->buffer[impl->tail] = item;
-  impl->tail = (impl->tail + 1) % impl->capacity;
+  impl->tail = (impl->tail + 1) & (impl->capacity - 1);
   impl->count++;
 
   pthread_mutex_unlock(&impl->lock);
@@ -111,7 +115,7 @@ int mutex_spsc_pop(queue_t *q, int *item) {
 
   *item = impl->buffer[impl->head];
   impl->buffer[impl->head] = 0;
-  impl->head = (impl->head + 1) % impl->capacity;
+  impl->head = (impl->head + 1) & (impl->capacity - 1);
   impl->count--;
 
   pthread_mutex_unlock(&impl->lock);
