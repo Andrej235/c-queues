@@ -1,4 +1,4 @@
-#include "spsc.h"
+#include "mutex_spsc.h"
 
 #include <pthread.h>
 #include <stddef.h>
@@ -15,7 +15,11 @@ typedef struct mutex_spsc_queue {
   pthread_mutex_t lock;
 } mutex_spsc_queue_t;
 
-static const queue_vtable_t mutex_spsc_vtable = {.enqueue = mutex_spsc_push, .dequeue = mutex_spsc_pop, .destroy = mutex_spsc_destroy};
+static const queue_vtable_t mutex_spsc_vtable = {
+    .enqueue = mutex_spsc_push,
+    .dequeue = mutex_spsc_pop,
+    .destroy = mutex_spsc_destroy,
+};
 
 // Create a queue with given capacity (must be > 0)
 queue_t *mutex_spsc_create(size_t capacity) {
@@ -61,14 +65,14 @@ queue_t *mutex_spsc_create(size_t capacity) {
 
 // Destroy queue and free resources. Caller must ensure no threads are using it.
 void mutex_spsc_destroy(queue_t *q) {
-  mutex_spsc_queue_t *impl = (mutex_spsc_queue_t *)q->impl;
-  if (!impl) {
+  if (!q) {
     return;
   }
 
-  pthread_mutex_destroy(&impl->lock);
-  free(impl->buffer);
-  free(impl);
+  mutex_spsc_queue_t *imp = (mutex_spsc_queue_t *)q->impl;
+  free(imp->buffer);
+  free(imp);
+  free(q);
 }
 
 // Push an item. Returns 0 on success, -1 if full.
