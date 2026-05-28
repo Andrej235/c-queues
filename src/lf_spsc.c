@@ -16,6 +16,7 @@ typedef struct lf_spsc_queue {
 static const queue_vtable_t lf_spsc_vtable = {
     .enqueue = lf_spsc_push,
     .dequeue = lf_spsc_pop,
+    .count = lf_spsc_count,
     .destroy = lf_spsc_destroy,
 };
 
@@ -98,6 +99,17 @@ int lf_spsc_pop(queue_t *q, int *item) {
 
   *item = impl->buffer[tail & (impl->capacity - 1)];
   impl->buffer[tail & (impl->capacity - 1)] = 0;
-  atomic_store_explicit(&impl->head, tail + 1, memory_order_release);
+  atomic_store_explicit(&impl->tail, tail + 1, memory_order_release);
   return 0;
+}
+
+int lf_spsc_count(queue_t *q) {
+  lf_spsc_queue_t *impl = (lf_spsc_queue_t *)q->impl;
+  if (!impl) {
+    return -1;
+  }
+
+  size_t head = atomic_load_explicit(&impl->head, memory_order_acquire);
+  size_t tail = atomic_load_explicit(&impl->tail, memory_order_acquire);
+  return head - tail;
 }
