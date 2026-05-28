@@ -1,8 +1,6 @@
-add_executable(queues)
+add_library(queues)
 
 target_sources(queues
-    PRIVATE main.c
-
     PRIVATE queue.c
 
     PRIVATE mutex_spsc.c
