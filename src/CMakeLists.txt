@@ -3,7 +3,7 @@ add_library(queues)
 target_sources(queues
     PRIVATE queue.c
 
-    PRIVATE mutex_spsc.c
+    PRIVATE mutex_q.c
     PRIVATE lf_spsc.c
 )
 

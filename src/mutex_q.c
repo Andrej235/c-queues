@@ -1,4 +1,4 @@
-#include "mutex_spsc.h"
+#include "mutex_q.h"
 
 #include <pthread.h>
 #include <stddef.h>
@@ -6,24 +6,24 @@
 
 #include "queue.h"
 
-typedef struct mutex_spsc_queue {
+typedef struct mutex_queue {
   int *buffer;
   size_t capacity; // maximum number of items buffer can hold
   size_t head;     // index to pop from
   size_t tail;     // index to push to
   size_t count;    // current number of items
   pthread_mutex_t lock;
-} mutex_spsc_queue_t;
+} mutex_queue_t;
 
-static const queue_vtable_t mutex_spsc_vtable = {
-    .enqueue = mutex_spsc_push,
-    .dequeue = mutex_spsc_pop,
-    .count = mutex_spsc_count,
-    .destroy = mutex_spsc_destroy,
+static const queue_vtable_t mutex_vtable = {
+    .enqueue = mutex_queue_push,
+    .dequeue = mutex_queue_pop,
+    .count = mutex_queue_count,
+    .destroy = mutex_queue_destroy,
 };
 
 // Create a queue with given capacity (must be > 0)
-queue_t *mutex_spsc_create(size_t capacity) {
+queue_t *mutex_queue_create(size_t capacity) {
   if (capacity == 0) {
     return NULL;
   }
@@ -37,7 +37,7 @@ queue_t *mutex_spsc_create(size_t capacity) {
     return NULL;
   }
 
-  mutex_spsc_queue_t *imp = malloc(sizeof(*imp));
+  mutex_queue_t *imp = malloc(sizeof(*imp));
   if (!imp) {
     free(q);
     return NULL;
@@ -63,26 +63,26 @@ queue_t *mutex_spsc_create(size_t capacity) {
   }
 
   q->impl = imp;
-  q->ops = &mutex_spsc_vtable;
+  q->ops = &mutex_vtable;
 
   return q;
 }
 
 // Destroy queue and free resources. Caller must ensure no threads are using it.
-void mutex_spsc_destroy(queue_t *q) {
+void mutex_queue_destroy(queue_t *q) {
   if (!q) {
     return;
   }
 
-  mutex_spsc_queue_t *imp = (mutex_spsc_queue_t *)q->impl;
+  mutex_queue_t *imp = (mutex_queue_t *)q->impl;
   free(imp->buffer);
   free(imp);
   free(q);
 }
 
 // Push an item. Returns 0 on success, -1 if full.
-int mutex_spsc_push(queue_t *q, int item) {
-  mutex_spsc_queue_t *impl = (mutex_spsc_queue_t *)q->impl;
+int mutex_queue_push(queue_t *q, int item) {
+  mutex_queue_t *impl = (mutex_queue_t *)q->impl;
   if (!impl) {
     return -1;
   }
@@ -102,8 +102,8 @@ int mutex_spsc_push(queue_t *q, int item) {
 }
 
 // Pop an item. Returns 0 on success and sets *item, -1 if empty.
-int mutex_spsc_pop(queue_t *q, int *item) {
-  mutex_spsc_queue_t *impl = (mutex_spsc_queue_t *)q->impl;
+int mutex_queue_pop(queue_t *q, int *item) {
+  mutex_queue_t *impl = (mutex_queue_t *)q->impl;
   if (!impl || !item) {
     return -1;
   }
@@ -123,8 +123,8 @@ int mutex_spsc_pop(queue_t *q, int *item) {
   return 0;
 }
 
-int mutex_spsc_count(queue_t *q) {
-  mutex_spsc_queue_t *impl = (mutex_spsc_queue_t *)q->impl;
+int mutex_queue_count(queue_t *q) {
+  mutex_queue_t *impl = (mutex_queue_t *)q->impl;
   if (!impl) {
     return -1;
   }
