@@ -23,7 +23,7 @@ typedef struct {
   uint64_t operations;              // local to thread, successful enqueue/dequeue operations during runtime
 } thread_context_t __attribute__((aligned(64)));
 
-void bench_run(char *name, int n_producers, int n_consumers, int warmup_seconds, int runtime_seconds, queue_t *q) {
+void bench_run(char *name, int n_producers, int n_consumers, float warmup_seconds, float runtime_seconds, queue_t *q) {
   if (runtime_seconds <= 0) {
     fprintf(stderr, "Runtime seconds must be greater than 0\n");
     exit(EXIT_FAILURE);
@@ -55,7 +55,7 @@ void bench_run(char *name, int n_producers, int n_consumers, int warmup_seconds,
 
   printf("Running benchmark: %s\n", name);
   printf("Producers: %d, Consumers: %d\n", n_producers, n_consumers);
-  printf("Warmup time: %d seconds, Runtime: %d seconds\n", warmup_seconds, runtime_seconds);
+  printf("Time: %.1fs warmup, %.1fs runtime\n", warmup_seconds, runtime_seconds);
 
   atomic_int ready_count;
   pthread_barrier_t start_barrier; // sync warmup start

@@ -1,7 +1,7 @@
 #ifndef BENCH_H
 #define BENCH_H
 
-void mutex_spsc_bench();
-void lf_spsc_bench();
+void bench_mutex_spsc();
+void bench_lf_spsc();
 
 #endif // BENCH_H

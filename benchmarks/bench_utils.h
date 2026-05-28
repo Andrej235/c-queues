@@ -3,6 +3,6 @@
 
 #include "queue.h"
 
-void bench_run(char *name, int n_producers, int n_consumers, int warmup_seconds, int runtime_seconds, queue_t *q);
+void bench_run(char *name, int n_producers, int n_consumers, float warmup_seconds, float runtime_seconds, queue_t *q);
 
 #endif // BENCH_UTILS_H
