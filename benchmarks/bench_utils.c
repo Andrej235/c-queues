@@ -1,9 +1,11 @@
 #define _XOPEN_SOURCE 600
+#define _GNU_SOURCE
 
 #include "bench_utils.h"
 
 #include <inttypes.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -14,16 +16,20 @@
 static void run_producer(void *arg);
 static void run_consumer(void *arg);
 static char *format_number(uint64_t number, char *buffer, size_t buffer_size);
+static void pin_thread(int cpu);
+
+static volatile int sink; // used to prevent compiler optimizing away the benchmark loops
 
 typedef struct {
   queue_t *q;                      // queue to benchmark
   atomic_int ready_count;          // number of threads that have signaled they are ready
   pthread_barrier_t start_barrier; // used to sync warmup start
   atomic_int phase;                // 0 = waiting for all threads to be ready, 1 = warmup, 2 = runtime, 3 = stop
-} shared_context_t;
+} shared_context_t __attribute__((aligned(64)));
 
 typedef struct {
   shared_context_t *shared;
+  int cpu;
   uint64_t operations; // local to thread, successful enqueue/dequeue operations during runtime
 } thread_context_t __attribute__((aligned(64)));
 
@@ -81,9 +87,11 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
     exit(EXIT_FAILURE);
   }
 
+  long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
   for (int i = 0; i < n_producers; i++) {
     producers[i].shared = shared;
     producers[i].operations = 0;
+    producers[i].cpu = i % cpu_count;
 
     pthread_t thread;
     if (pthread_create(&thread, NULL, (void *(*)(void *))run_producer, &producers[i]) != 0) {
@@ -96,6 +104,7 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   for (int i = 0; i < n_consumers; i++) {
     consumers[i].shared = shared;
     consumers[i].operations = 0;
+    consumers[i].cpu = (n_producers + i) % cpu_count;
 
     if (pthread_create(&threads[n_producers + i], NULL, (void *(*)(void *))run_consumer, &consumers[i]) != 0) {
       fprintf(stderr, "Failed to create consumer thread\n");
@@ -144,7 +153,7 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
 
 static void run_producer(void *arg) {
   thread_context_t *ctx = (thread_context_t *)arg;
-  // todo: pin thread to a core
+  pin_thread(ctx->cpu);
 
   // signal ready
   atomic_fetch_add(&ctx->shared->ready_count, 1);
@@ -170,7 +179,7 @@ static void run_producer(void *arg) {
 
 static void run_consumer(void *arg) {
   thread_context_t *ctx = (thread_context_t *)arg;
-  // todo: pin thread to a core
+  pin_thread(ctx->cpu);
 
   // signal ready
   atomic_fetch_add(&ctx->shared->ready_count, 1);
@@ -181,14 +190,14 @@ static void run_consumer(void *arg) {
   // warmup
   while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 2) {
     if (queue_dequeue(ctx->shared->q, &item) == 0) {
-      item++;
+      sink += item;
     }
   }
 
   // runtime
   while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 3) {
     if (queue_dequeue(ctx->shared->q, &item) == 0) {
-      item++;
+      sink += item;
       ctx->operations++;
     }
   }
@@ -223,4 +232,12 @@ static char *format_number(uint64_t number, char *buffer, size_t buffer_size) {
   }
 
   return buffer;
+}
+
+static void pin_thread(int cpu) {
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  CPU_SET(cpu, &cpuset);
+
+  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 }
