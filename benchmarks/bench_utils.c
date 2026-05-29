@@ -16,11 +16,15 @@ static void run_consumer(void *arg);
 static char *format_number(uint64_t number, char *buffer, size_t buffer_size);
 
 typedef struct {
-  queue_t *q;                       // shared
-  atomic_int *ready_count;          // shared
-  pthread_barrier_t *start_barrier; // shared
-  atomic_int *phase;                // shared
-  uint64_t operations;              // local to thread, successful enqueue/dequeue operations during runtime
+  queue_t *q;                      // queue to benchmark
+  atomic_int ready_count;          // number of threads that have signaled they are ready
+  pthread_barrier_t start_barrier; // used to sync warmup start
+  atomic_int phase;                // 0 = waiting for all threads to be ready, 1 = warmup, 2 = runtime, 3 = stop
+} shared_context_t;
+
+typedef struct {
+  shared_context_t *shared;
+  uint64_t operations; // local to thread, successful enqueue/dequeue operations during runtime
 } thread_context_t __attribute__((aligned(64)));
 
 void bench_run(char *name, int n_producers, int n_consumers, float warmup_seconds, float runtime_seconds, queue_t *q) {
@@ -57,13 +61,16 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   printf("Producers: %d, Consumers: %d\n", n_producers, n_consumers);
   printf("Time: %.1fs warmup, %.1fs runtime\n", warmup_seconds, runtime_seconds);
 
-  atomic_int ready_count;
-  pthread_barrier_t start_barrier; // sync warmup start
-  atomic_int phase;                // 0 = not ready, 1 = warmup, 2 = runtime, 3 = done
+  shared_context_t *shared = malloc(sizeof(shared_context_t));
+  if (shared == NULL) {
+    fprintf(stderr, "Failed to allocate shared context\n");
+    exit(EXIT_FAILURE);
+  }
 
-  pthread_barrier_init(&start_barrier, NULL, n_producers + n_consumers);
-  atomic_init(&ready_count, 0);
-  atomic_init(&phase, 0);
+  shared->q = q;
+  pthread_barrier_init(&shared->start_barrier, NULL, n_producers + n_consumers);
+  atomic_init(&shared->ready_count, 0);
+  atomic_init(&shared->phase, 0);
 
   thread_context_t *producers = malloc(sizeof(thread_context_t) * n_producers);
   thread_context_t *consumers = malloc(sizeof(thread_context_t) * n_consumers);
@@ -75,10 +82,7 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   }
 
   for (int i = 0; i < n_producers; i++) {
-    producers[i].q = q;
-    producers[i].ready_count = &ready_count;
-    producers[i].start_barrier = &start_barrier;
-    producers[i].phase = &phase;
+    producers[i].shared = shared;
     producers[i].operations = 0;
 
     pthread_t thread;
@@ -90,35 +94,30 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   }
 
   for (int i = 0; i < n_consumers; i++) {
-    consumers[i].q = q;
-    consumers[i].ready_count = &ready_count;
-    consumers[i].start_barrier = &start_barrier;
-    consumers[i].phase = &phase;
+    consumers[i].shared = shared;
     consumers[i].operations = 0;
 
-    pthread_t thread;
-    if (pthread_create(&thread, NULL, (void *(*)(void *))run_consumer, &consumers[i]) != 0) {
+    if (pthread_create(&threads[n_producers + i], NULL, (void *(*)(void *))run_consumer, &consumers[i]) != 0) {
       fprintf(stderr, "Failed to create consumer thread\n");
       exit(EXIT_FAILURE);
     }
-    threads[n_producers + i] = thread;
   }
 
   // wait for all threads to be ready
-  while (atomic_load(&ready_count) < n_producers + n_consumers) {
+  while (atomic_load(&shared->ready_count) < n_producers + n_consumers) {
     usleep(1000);
   }
 
   // start warmup
-  atomic_store(&phase, 1);
+  atomic_store(&shared->phase, 1);
   sleep(warmup_seconds);
 
   // start runtime
-  atomic_store(&phase, 2);
+  atomic_store(&shared->phase, 2);
   sleep(runtime_seconds);
 
   // stop all threads
-  atomic_store(&phase, 3);
+  atomic_store(&shared->phase, 3);
   for (int i = 0; i < n_producers + n_consumers; i++) {
     pthread_join(threads[i], NULL); // wait for thread to finish
   }
@@ -140,7 +139,7 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   free(producers);
   free(consumers);
   free(threads);
-  pthread_barrier_destroy(&start_barrier);
+  pthread_barrier_destroy(&shared->start_barrier);
 }
 
 static void run_producer(void *arg) {
@@ -148,21 +147,21 @@ static void run_producer(void *arg) {
   // todo: pin thread to a core
 
   // signal ready
-  atomic_fetch_add(ctx->ready_count, 1);
-  pthread_barrier_wait(ctx->start_barrier);
+  atomic_fetch_add(&ctx->shared->ready_count, 1);
+  pthread_barrier_wait(&ctx->shared->start_barrier);
 
   int item = 0;
 
   // warmup
-  while (atomic_load_explicit(ctx->phase, memory_order_acquire) < 2) {
-    if (queue_enqueue(ctx->q, item) == 0) {
+  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 2) {
+    if (queue_enqueue(ctx->shared->q, item) == 0) {
       item++;
     }
   }
 
   // runtime
-  while (atomic_load_explicit(ctx->phase, memory_order_acquire) < 3) {
-    if (queue_enqueue(ctx->q, item) == 0) {
+  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 3) {
+    if (queue_enqueue(ctx->shared->q, item) == 0) {
       item++;
       ctx->operations++;
     }
@@ -174,21 +173,21 @@ static void run_consumer(void *arg) {
   // todo: pin thread to a core
 
   // signal ready
-  atomic_fetch_add(ctx->ready_count, 1);
-  pthread_barrier_wait(ctx->start_barrier);
+  atomic_fetch_add(&ctx->shared->ready_count, 1);
+  pthread_barrier_wait(&ctx->shared->start_barrier);
 
   int item = 0;
 
   // warmup
-  while (atomic_load_explicit(ctx->phase, memory_order_acquire) < 2) {
-    if (queue_dequeue(ctx->q, &item) == 0) {
+  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 2) {
+    if (queue_dequeue(ctx->shared->q, &item) == 0) {
       item++;
     }
   }
 
   // runtime
-  while (atomic_load_explicit(ctx->phase, memory_order_acquire) < 3) {
-    if (queue_dequeue(ctx->q, &item) == 0) {
+  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 3) {
+    if (queue_dequeue(ctx->shared->q, &item) == 0) {
       item++;
       ctx->operations++;
     }

@@ -36,9 +36,11 @@ static void run_benchmark(benchmark_type_t type) {
     break;
 
   case BENCH_MUTEX_SPMC:
+    bench_mutex_spmc();
     break;
 
   case BENCH_LF_SPMC:
+    bench_lf_spmc();
     break;
 
   case BENCH_MUTEX_MPSC:

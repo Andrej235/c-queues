@@ -5,6 +5,7 @@ target_sources(queues
 
     PRIVATE mutex_q.c
     PRIVATE lf_spsc.c
+    PRIVATE lf_spmc.c
 )
 
 target_include_directories(queues PUBLIC
