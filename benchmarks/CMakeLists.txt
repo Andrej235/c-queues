@@ -13,3 +13,4 @@ target_include_directories(benchmarks PUBLIC
 )
 
 target_link_libraries(benchmarks PRIVATE queues)
+target_link_libraries(benchmarks PRIVATE utils)

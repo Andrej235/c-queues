@@ -1,5 +1,4 @@
 #define _XOPEN_SOURCE 600
-#define _GNU_SOURCE
 
 #include "bench_utils.h"
 
@@ -13,10 +12,12 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "format.h"
+#include "queue.h"
+#include "thread_pinning.h"
+
 static void run_producer(void *arg);
 static void run_consumer(void *arg);
-static char *format_number(uint64_t number, char *buffer, size_t buffer_size);
-static void pin_thread(int cpu);
 
 static volatile int sink; // used to prevent compiler optimizing away the benchmark loops
 
@@ -202,43 +203,4 @@ static void run_consumer(void *arg) {
       ctx->operations++;
     }
   }
-}
-
-static char *format_number(uint64_t number, char *buffer, size_t buffer_size) {
-  char temp[32];
-  snprintf(temp, sizeof(temp), "%" PRIu64, number);
-
-  int len = strlen(temp);
-  int commas = (len - 1) / 3;
-  int new_len = len + commas;
-
-  if ((size_t)(new_len + 1) > buffer_size) {
-    return NULL; // buffer too small
-  }
-
-  buffer[new_len] = '\0';
-
-  int i = len - 1;
-  int j = new_len - 1;
-  int digit_count = 0;
-
-  while (i >= 0) {
-    buffer[j--] = temp[i--];
-    digit_count++;
-
-    if (digit_count == 3 && i >= 0) {
-      buffer[j--] = ',';
-      digit_count = 0;
-    }
-  }
-
-  return buffer;
-}
-
-static void pin_thread(int cpu) {
-  cpu_set_t cpuset;
-  CPU_ZERO(&cpuset);
-  CPU_SET(cpu, &cpuset);
-
-  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 }

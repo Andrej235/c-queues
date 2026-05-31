@@ -12,3 +12,4 @@ target_include_directories(tests PUBLIC
 )
 
 target_link_libraries(tests PRIVATE queues)
+target_link_libraries(tests PRIVATE utils)
