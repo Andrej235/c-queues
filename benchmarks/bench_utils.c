@@ -149,6 +149,7 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   free(consumers);
   free(threads);
   pthread_barrier_destroy(&shared->start_barrier);
+  free(shared);
 }
 
 static void run_producer(void *arg) {
