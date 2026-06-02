@@ -1,3 +1,5 @@
+// TODO: make queues work with size_t instead of int
+
 #ifndef QUEUE_H
 #define QUEUE_H
 

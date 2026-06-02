@@ -15,18 +15,20 @@
 #include "queue.h"
 #include "thread_pinning.h"
 
+#pragma region FIFO
+
 typedef struct {
-  queue_t *q;                      // queue to benchmark
+  queue_t *q;                      // queue to test
   atomic_int ready_count;          // number of threads that have signaled they are ready
-  pthread_barrier_t start_barrier; // used to sync warmup start
+  pthread_barrier_t start_barrier; // used to sync start
   atomic_int phase;                // 0 = waiting for all threads to be ready, 1 = runtime, 2 = stop
-} shared_context_t __attribute__((aligned(64)));
+} fifo_shared_context_t __attribute__((aligned(64)));
 
 typedef struct {
   int cpu;
   uint64_t operations; // local to thread, successful enqueue/dequeue operations during runtime, used to give scale to the
                        // output of the tests
-  shared_context_t *shared;
+  fifo_shared_context_t *shared;
 } fifo_thread_context_t __attribute__((aligned(64)));
 
 static void run_fifo_producer(void *arg);
@@ -46,7 +48,7 @@ void test_fifo_run(char *name, float run_duration, queue_t *q) {
   printf("Running FIFO test: %s\n", name);
   printf("Time: %.1fs\n", run_duration);
 
-  shared_context_t *shared = malloc(sizeof(shared_context_t));
+  fifo_shared_context_t *shared = malloc(sizeof(fifo_shared_context_t));
   if (shared == NULL) {
     fprintf(stderr, "Failed to allocate shared context\n");
     exit(EXIT_FAILURE);
@@ -177,6 +179,215 @@ static void run_fifo_consumer(void *arg) {
   }
 }
 
-void test_dupes_run(char *name, int producers, int consumers, size_t items_count, queue_t *q) {}
+#pragma endregion
+
+#pragma region Dupes
+
+typedef struct {
+  queue_t *q;       // queue to test
+  atomic_int phase; // 0 = running, 1 = stop
+  atomic_size_t
+      *dequeued_items_bitmap; // bitmap to track which items have been dequeued, used to detect duplicates and missing items
+  size_t items_count;         // total number of items to be enqueued, used to determine the size of the bitmap
+} dupes_shared_context_t __attribute__((aligned(64)));
+
+typedef struct {
+  int cpu;
+  size_t start_index;      // starting index for enques
+  size_t items_to_enqueue; // number of items to enqueue
+  dupes_shared_context_t *shared;
+} dupes_producer_thread_context_t __attribute__((aligned(64)));
+
+typedef struct {
+  int cpu;
+  dupes_shared_context_t *shared;
+} dupes_consumer_thread_context_t __attribute__((aligned(64)));
+
+static void run_dupes_producer(void *arg);
+static void run_dupes_consumer(void *arg);
+static void add_item_to_bitmap(dupes_shared_context_t *shared, size_t item);
+
+void test_dupes_run(char *name, int producers, int consumers, size_t items_count, queue_t *q) {
+  if (producers <= 0) {
+    fprintf(stderr, "Number of producers must be greater than 0\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (consumers <= 0) {
+    fprintf(stderr, "Number of consumers must be greater than 0\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (items_count <= 0) {
+    fprintf(stderr, "Items count must be greater than 0\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (q == NULL) {
+    fprintf(stderr, "Queue cannot be NULL\n");
+    exit(EXIT_FAILURE);
+  }
+
+  printf("Running dupes test: %s\n", name);
+  char buf[32];
+  printf("Operations: %s spread across %d producers and %d consumers\n", format_number(items_count, buf, sizeof(buf)), producers,
+         consumers);
+
+  dupes_shared_context_t *shared = malloc(sizeof(dupes_shared_context_t));
+  if (shared == NULL) {
+    fprintf(stderr, "Failed to allocate shared context\n");
+    exit(EXIT_FAILURE);
+  }
+
+  shared->q = q;
+  atomic_init(&shared->phase, 0);
+  shared->items_count = items_count;
+  size_t bitmap_size = (items_count + 63) / 64; // number of uint64_t needed to track items_count bits
+  shared->dequeued_items_bitmap = malloc(sizeof(atomic_size_t) * bitmap_size);
+
+  if (shared->dequeued_items_bitmap == NULL) {
+    fprintf(stderr, "Failed to allocate dequeued items bitmap\n");
+    exit(EXIT_FAILURE);
+  }
+
+  for (size_t i = 0; i < bitmap_size; i++) {
+    atomic_init(&shared->dequeued_items_bitmap[i], 0);
+  }
+
+  dupes_producer_thread_context_t *producer_ctxs = malloc(sizeof(dupes_producer_thread_context_t) * producers);
+  if (producer_ctxs == NULL) {
+    fprintf(stderr, "Failed to allocate producer contexts\n");
+    exit(EXIT_FAILURE);
+  }
+
+  dupes_consumer_thread_context_t *consumer_ctxs = malloc(sizeof(dupes_consumer_thread_context_t) * consumers);
+  if (consumer_ctxs == NULL) {
+    fprintf(stderr, "Failed to allocate consumer contexts\n");
+    exit(EXIT_FAILURE);
+  }
+
+  pthread_t *producer_threads = malloc(sizeof(pthread_t) * producers);
+  if (producer_threads == NULL) {
+    fprintf(stderr, "Failed to allocate producer threads\n");
+    exit(EXIT_FAILURE);
+  }
+
+  pthread_t *consumer_threads = malloc(sizeof(pthread_t) * consumers);
+  if (consumer_threads == NULL) {
+    fprintf(stderr, "Failed to allocate consumer threads\n");
+    exit(EXIT_FAILURE);
+  }
+
+  long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
+  int items_per_producer = items_count / producers;
+
+  for (int i = 0; i < producers; i++) {
+    producer_ctxs[i] = (dupes_producer_thread_context_t){
+        .cpu = i % cpu_count,
+        .start_index = items_per_producer * i,
+        .items_to_enqueue =
+            items_per_producer + (i == producers - 1 ? items_count % producers : 0), // last producer enqueues the remainder
+        .shared = shared,
+    };
+
+    if (pthread_create(&producer_threads[i], NULL, (void *(*)(void *))run_dupes_producer, &producer_ctxs[i]) != 0) {
+      fprintf(stderr, "Failed to create producer thread %d\n", i);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  for (int i = 0; i < consumers; i++) {
+    consumer_ctxs[i] = (dupes_consumer_thread_context_t){
+        .cpu = (producers + i) % cpu_count,
+        .shared = shared,
+    };
+
+    if (pthread_create(&consumer_threads[i], NULL, (void *(*)(void *))run_dupes_consumer, &consumer_ctxs[i]) != 0) {
+      fprintf(stderr, "Failed to create consumer thread %d\n", i);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  for (int i = 0; i < producers; i++) {
+    pthread_join(producer_threads[i], NULL);
+  }
+
+  atomic_store(&shared->phase, 1); // signal consumers to stop after producers are done
+
+  for (int i = 0; i < consumers; i++) {
+    pthread_join(consumer_threads[i], NULL);
+  }
+
+  // verify all items were dequeued
+  for (size_t i = 0; i < items_count; i++) {
+    size_t bitmap_index = i / 64;
+    size_t bit_offset = i % 64;
+    uint64_t bit_mask = (uint64_t)1 << bit_offset;
+
+    if ((atomic_load_explicit(&shared->dequeued_items_bitmap[bitmap_index], memory_order_relaxed) & bit_mask) == 0) {
+      fprintf(stderr, "Dupe test failed: item %zu was not dequeued\n", i);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  // cleanup
+  free(consumer_threads);
+  free(producer_threads);
+  free(consumer_ctxs);
+  free(producer_ctxs);
+  free(shared->dequeued_items_bitmap);
+  free(shared);
+
+  printf("Dupe test passed: all %s items were enqueued and dequeued exactly once\n", format_number(items_count, buf, sizeof(buf)));
+}
+
+static void run_dupes_producer(void *arg) {
+  dupes_producer_thread_context_t *ctx = (dupes_producer_thread_context_t *)arg;
+  pin_thread(ctx->cpu);
+
+  size_t end_index = ctx->start_index + ctx->items_to_enqueue;
+  for (size_t i = ctx->start_index; i < end_index; i++) {
+    while (queue_enqueue(ctx->shared->q, i) != 0) {
+      // retry until the item is enqueued to not skip any items
+    }
+  }
+}
+
+static void run_dupes_consumer(void *arg) {
+  dupes_consumer_thread_context_t *ctx = (dupes_consumer_thread_context_t *)arg;
+  pin_thread(ctx->cpu);
+
+  int item = 0;
+  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 1) {
+    if (queue_dequeue(ctx->shared->q, &item) == 0) {
+      add_item_to_bitmap(ctx->shared, (size_t)item);
+    }
+  }
+
+  // drain the queue after producers are done
+  while (queue_dequeue(ctx->shared->q, &item) == 0) {
+    add_item_to_bitmap(ctx->shared, (size_t)item);
+  }
+}
+
+static void add_item_to_bitmap(dupes_shared_context_t *shared, size_t item) {
+  if (item < 0 || (size_t)item >= shared->items_count) {
+    fprintf(stderr, "Dupe test failed: dequeued item %d is out of valid range [0, " PRIu64 ")\n", item, shared->items_count);
+    exit(EXIT_FAILURE);
+  }
+
+  size_t bitmap_index = item / 64;
+  size_t bit_offset = item % 64;
+  uint64_t bit_mask = (uint64_t)1 << bit_offset;
+
+  // check if the bit is already set
+  uint64_t old_value = atomic_fetch_or(&shared->dequeued_items_bitmap[bitmap_index], bit_mask);
+  if ((old_value & bit_mask) != 0) {
+    fprintf(stderr, "Dupe test failed: item %d was dequeued more than once\n", item);
+    exit(EXIT_FAILURE);
+  }
+}
+
+#pragma endregion
 
 void test_stress_ops_count_run(char *name, int max_producers, int max_consumers, float run_duration, queue_t *q) {}
