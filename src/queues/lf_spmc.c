@@ -27,8 +27,8 @@ static const queue_vtable_t lf_spmc_vtable = {
 };
 
 queue_t *lf_spmc_create(size_t capacity) {
-  if (capacity == 0) {
-    return NULL;
+  if (capacity <= 1) {
+    return NULL; // vyukov seq approach doesn't work for capacity of 1
   }
 
   if ((capacity & (capacity - 1)) != 0) {

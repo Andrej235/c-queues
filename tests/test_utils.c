@@ -230,8 +230,8 @@ void test_dupes_run(char *name, int producers, int consumers, size_t items_count
 
   printf("Running dupes test: %s\n", name);
   char buf[32];
-  printf("Operations: %s spread across %d producers and %d consumers\n", format_number(items_count, buf, sizeof(buf)), producers,
-         consumers);
+  printf("Operations: %s spread across %d producers and %d consumers\n", format_number(items_count, buf, sizeof(buf)),
+         producers, consumers);
 
   dupes_shared_context_t *shared = malloc(sizeof(dupes_shared_context_t));
   if (shared == NULL) {
@@ -338,7 +338,8 @@ void test_dupes_run(char *name, int producers, int consumers, size_t items_count
   free(shared->dequeued_items_bitmap);
   free(shared);
 
-  printf("Dupe test passed: all %s items were enqueued and dequeued exactly once\n", format_number(items_count, buf, sizeof(buf)));
+  printf("Dupe test passed: all %s items were enqueued and dequeued exactly once\n",
+         format_number(items_count, buf, sizeof(buf)));
 }
 
 static void run_dupes_producer(void *arg) {

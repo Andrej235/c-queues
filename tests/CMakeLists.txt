@@ -5,6 +5,7 @@ target_sources(tests
 
     PRIVATE test_utils.c
     PRIVATE test_spsc.c
+    PRIVATE test_spmc.c
 )
 
 target_include_directories(tests PUBLIC
