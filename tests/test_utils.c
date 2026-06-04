@@ -312,6 +312,8 @@ void test_dupes_run(char *name, int producers, int consumers, size_t items_count
     pthread_join(producer_threads[i], NULL);
   }
 
+  printf("All producers finished enqueuing\n");
+
   atomic_store(&shared->phase, 1); // signal consumers to stop after producers are done
 
   for (int i = 0; i < consumers; i++) {
@@ -352,11 +354,13 @@ static void run_dupes_producer(void *arg) {
       // retry until the item is enqueued to not skip any items
     }
   }
+  
+  printf("Producer on CPU %d finished enqueuing items [%zu, %zu)\n", ctx->cpu, ctx->start_index, end_index);
 }
 
 static void run_dupes_consumer(void *arg) {
   dupes_consumer_thread_context_t *ctx = (dupes_consumer_thread_context_t *)arg;
-  pin_thread(ctx->cpu);
+  pin_thread(4);
 
   int item = 0;
   while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 1) {

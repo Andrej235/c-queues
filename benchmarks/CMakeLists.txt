@@ -6,6 +6,7 @@ target_sources(benchmarks
     PRIVATE bench_utils.c
     PRIVATE bench_spsc.c
     PRIVATE bench_spmc.c
+    PRIVATE bench_mpsc.c
 )
 
 target_include_directories(benchmarks PUBLIC
