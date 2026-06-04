@@ -32,7 +32,9 @@ void test_dupes_run(char *name, int producers, int consumers, size_t items_count
  * @brief Tests the queue under stress conditions with a specified number of producers and consumers. The test runs for a
  * specified duration, counting the number of enqueues and dequeues. The producers and consumers run in separate threads,
  * with random yields and sleeps to increase the likelihood of exposing concurrency issues. Logs the total number of
- * operations performed by producers and consumers at the end of the test.
+ * operations performed by producers and consumers at the end of the test. Test is considered successful if the total number
+ * of enqueues matches the total number of dequeues, indicating a likelihood that no items were lost or duplicated during the
+ * test.
  *
  * @param name Test name, used only for logging
  * @param producers Number of producer threads

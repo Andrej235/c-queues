@@ -391,4 +391,218 @@ static void add_item_to_bitmap(dupes_shared_context_t *shared, size_t item) {
 
 #pragma endregion
 
-void test_stress_ops_count_run(char *name, int max_producers, int max_consumers, float run_duration, queue_t *q) {}
+#pragma region Stress Ops Count
+
+typedef struct {
+  queue_t *q;       // queue to test
+  atomic_int phase; // 0 = runtime, 1 = stop
+} stress_shared_context_t __attribute__((aligned(64)));
+
+typedef struct {
+  int cpu;
+  uint64_t operations; // local to thread, successful enqueue/dequeue operations during runtime, used to compare total
+                       // enqueues and dequeues at the end of the test
+  uint64_t rng_seed;   // random seed for the thread
+  stress_shared_context_t *shared;
+} stress_thread_context_t __attribute__((aligned(64)));
+
+static inline uint64_t xorshift64(uint64_t *state);
+void run_stress_producer(void *arg);
+void run_stress_consumer(void *arg);
+
+static volatile int stress_sink; // used to prevent compiler optimizing away the dequeue operations in the consumer
+
+void test_stress_ops_count_run(char *name, int producers, int consumers, float run_duration, queue_t *q) {
+  if (producers <= 0) {
+    fprintf(stderr, "Number of producers must be greater than 0\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (consumers <= 0) {
+    fprintf(stderr, "Number of consumers must be greater than 0\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (run_duration <= 0) {
+    fprintf(stderr, "Run duration must be greater than 0\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (q == NULL) {
+    fprintf(stderr, "Queue cannot be NULL\n");
+    exit(EXIT_FAILURE);
+  }
+
+  printf("Running stress ops count test: %s\n", name);
+  printf("Time: %.1fs, Producers: %d, Consumers: %d\n", run_duration, producers, consumers);
+
+  stress_shared_context_t *shared = malloc(sizeof(stress_shared_context_t));
+  if (shared == NULL) {
+    fprintf(stderr, "Failed to allocate shared context\n");
+    exit(EXIT_FAILURE);
+  }
+
+  shared->q = q;
+  atomic_init(&shared->phase, 0);
+
+  stress_thread_context_t *producer_ctxs = malloc(sizeof(stress_thread_context_t) * producers);
+  if (producer_ctxs == NULL) {
+    fprintf(stderr, "Failed to allocate producer contexts\n");
+    exit(EXIT_FAILURE);
+  }
+
+  stress_thread_context_t *consumer_ctxs = malloc(sizeof(stress_thread_context_t) * consumers);
+  if (consumer_ctxs == NULL) {
+    fprintf(stderr, "Failed to allocate consumer contexts\n");
+    exit(EXIT_FAILURE);
+  }
+
+  pthread_t *producer_threads = malloc(sizeof(pthread_t) * producers);
+  if (producer_threads == NULL) {
+    fprintf(stderr, "Failed to allocate producer threads\n");
+    exit(EXIT_FAILURE);
+  }
+
+  pthread_t *consumer_threads = malloc(sizeof(pthread_t) * consumers);
+  if (consumer_threads == NULL) {
+    fprintf(stderr, "Failed to allocate consumer threads\n");
+    exit(EXIT_FAILURE);
+  }
+
+  long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
+
+  for (int i = 0; i < producers; i++) {
+    producer_ctxs[i] = (stress_thread_context_t){
+        .cpu = i % cpu_count,
+        .operations = 0,
+        .rng_seed = (i + 1) * 0x123456789ABCDEFULL,
+        .shared = shared,
+    };
+
+    if (pthread_create(&producer_threads[i], NULL, (void *(*)(void *))run_stress_producer, &producer_ctxs[i]) != 0) {
+      fprintf(stderr, "Failed to create producer thread %d\n", i);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  for (int i = 0; i < consumers; i++) {
+    consumer_ctxs[i] = (stress_thread_context_t){
+        .cpu = (producers + i) % cpu_count,
+        .operations = 0,
+        .rng_seed = (producers + i + 1) * 0x123456789ABCDEFULL,
+        .shared = shared,
+    };
+
+    if (pthread_create(&consumer_threads[i], NULL, (void *(*)(void *))run_stress_consumer, &consumer_ctxs[i]) != 0) {
+      fprintf(stderr, "Failed to create consumer thread %d\n", i);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  // runtime
+  sleep(run_duration);
+
+  // signal threads to stop
+  atomic_store(&shared->phase, 1);
+
+  for (int i = 0; i < producers; i++) {
+    pthread_join(producer_threads[i], NULL);
+  }
+
+  for (int i = 0; i < consumers; i++) {
+    pthread_join(consumer_threads[i], NULL);
+  }
+
+  uint64_t total_enqueues = 0;
+  for (int i = 0; i < producers; i++) {
+    total_enqueues += producer_ctxs[i].operations;
+  }
+  uint64_t total_dequeues = 0;
+  for (int i = 0; i < consumers; i++) {
+    total_dequeues += consumer_ctxs[i].operations;
+  }
+
+  if (total_enqueues == total_dequeues) {
+    char buf[32];
+    printf("Total number of enqueues and dequeues match: %s\n",
+           format_number(total_enqueues + total_dequeues, buf, sizeof(buf)));
+  } else {
+    char buf1[32];
+    char buf2[32];
+    fprintf(stderr, "Mismatch in total operations: enqueues = %s, dequeues = %s\n",
+            format_number(total_enqueues, buf1, sizeof(buf1)), format_number(total_dequeues, buf2, sizeof(buf2)));
+    exit(EXIT_FAILURE);
+  }
+}
+
+void run_stress_producer(void *arg) {
+  stress_thread_context_t *ctx = (stress_thread_context_t *)arg;
+  pin_thread(ctx->cpu);
+
+  uint64_t rng_state = ctx->rng_seed;
+
+  // runtime
+  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 1) {
+    int item = (int)xorshift64(&rng_state); // generate a random item to enqueue
+    if (queue_enqueue(ctx->shared->q, item) == 0) {
+      ctx->operations++;
+    }
+
+    // randomly yield or sleep to increase the likelihood of exposing concurrency issues
+    uint64_t rand = xorshift64(&rng_state);
+
+    if ((rand & 0xFF) == 0) { // ~ 1 in 256
+      sched_yield();
+    }
+
+    if ((rand & 0xFFF) == 0) { // ~ 1 in 4096
+      usleep(1);
+    }
+  }
+}
+
+void run_stress_consumer(void *arg) {
+  stress_thread_context_t *ctx = (stress_thread_context_t *)arg;
+  pin_thread(ctx->cpu);
+
+  uint64_t rng_state = ctx->rng_seed;
+  int item;
+
+  // runtime
+  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 1) {
+    if (queue_dequeue(ctx->shared->q, &item) == 0) {
+      ctx->operations++;
+      stress_sink += item; // prevent optimizing away the dequeue
+    }
+
+    // randomly yield or sleep to increase the likelihood of exposing concurrency issues
+    uint64_t rand = xorshift64(&rng_state);
+
+    if ((rand & 0xFF) == 0) { // ~ 1 in 256
+      sched_yield();
+    }
+
+    if ((rand & 0xFFF) == 0) { // ~ 1 in 4096
+      usleep(1);
+    }
+  }
+
+  // drain the queue
+  while (queue_dequeue(ctx->shared->q, &item) == 0) {
+    ctx->operations++;
+    stress_sink += item; // prevent optimizing away the dequeue
+  }
+}
+
+static inline uint64_t xorshift64(uint64_t *state) {
+  uint64_t x = *state;
+
+  x ^= x << 13;
+  x ^= x >> 7;
+  x ^= x << 17;
+
+  *state = x;
+  return x;
+}
+
+#pragma endregion

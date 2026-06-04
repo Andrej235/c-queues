@@ -28,6 +28,17 @@ void test_lf_spmc() {
   test_dupes_run("Lock Free (LF) SPMC (buffer = 1024 * 1024)", 1, 16, 10000000, q_1024_1024);
   test_dupes_run("Lock Free (LF) SPMC (buffer = 1024 * 1024)", 1, 64, 10000000, q_1024_1024);
 
+  // stress ops count, 5 seconds each
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 2)", 1, 1, 5, q_2);
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 2)", 1, 16, 5, q_2);
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 2)", 1, 64, 5, q_2);
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 16)", 1, 1, 5, q_16);
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 16)", 1, 16, 5, q_16);
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 16)", 1, 64, 5, q_16);
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 1024 * 1024)", 1, 1, 5, q_1024_1024);
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 1024 * 1024)", 1, 16, 5, q_1024_1024);
+  test_stress_ops_count_run("Lock Free (LF) SPMC (buffer = 1024 * 1024)", 1, 64, 5, q_1024_1024);
+
   queue_destroy(q_2);
   queue_destroy(q_16);
   queue_destroy(q_1024_1024);
