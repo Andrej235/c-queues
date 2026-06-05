@@ -1,5 +1,6 @@
 #include "lf_spsc.h"
 
+#include <stdalign.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -8,9 +9,9 @@
 
 typedef struct lf_spsc_queue {
   int *buffer;
-  size_t capacity;    // maximum number of items buffer can hold
-  atomic_size_t head; // index to pop from
-  atomic_size_t tail; // index to push to
+  alignas(64) size_t capacity;    // maximum number of items buffer can hold
+  alignas(64) atomic_size_t head; // index to pop from
+  alignas(64) atomic_size_t tail; // index to push to
 } lf_spsc_queue_t;
 
 static const queue_vtable_t lf_spsc_vtable = {

@@ -1,6 +1,7 @@
 #include "lf_mpsc.h"
 
 #include <inttypes.h>
+#include <stdalign.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -9,14 +10,14 @@
 
 typedef struct {
   int value;
-  atomic_size_t seq; // used to determine if node is ready for push or pop
+  alignas(64) atomic_size_t seq; // used to determine if node is ready for push or pop
 } lf_mpsc_queue_node_t;
 
 typedef struct lf_mpsc_queue {
   lf_mpsc_queue_node_t *buffer;
-  size_t capacity;    // maximum number of items buffer can hold
-  atomic_size_t head; // index to push to
-  atomic_size_t tail; // index to pop from
+  alignas(64) size_t capacity;    // maximum number of items buffer can hold
+  alignas(64) atomic_size_t head; // index to push to
+  alignas(64) atomic_size_t tail; // index to pop from
 } lf_mpsc_queue_t;
 
 static const queue_vtable_t lf_mpsc_vtable = {
