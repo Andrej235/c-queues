@@ -398,7 +398,7 @@ static void add_item_to_bitmap(dupes_shared_context_t *shared, size_t item) {
 
 typedef struct {
   queue_t *q;       // queue to test
-  atomic_int phase; // 0 = runtime, 1 = stop
+  atomic_int phase; // 0 = runtime, 1 = draining, 2 = stop
 } stress_shared_context_t __attribute__((aligned(64)));
 
 typedef struct {
@@ -505,12 +505,15 @@ void test_stress_ops_count_run(char *name, int producers, int consumers, float r
   // runtime
   sleep(run_duration);
 
-  // signal threads to stop
+  // signal producer threads to stop, consumers will stop after draining the queue
   atomic_store(&shared->phase, 1);
 
   for (int i = 0; i < producers; i++) {
     pthread_join(producer_threads[i], NULL);
   }
+
+  // signal consumers to stop
+  atomic_store(&shared->phase, 2);
 
   for (int i = 0; i < consumers; i++) {
     pthread_join(consumer_threads[i], NULL);
@@ -550,8 +553,9 @@ void run_stress_producer(void *arg) {
 
   // runtime
   while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 1) {
-    int item = (int)xorshift64(&rng_state); // generate a random item to enqueue
-    if (queue_enqueue(ctx->shared->q, item) == 0) {
+    // the enqueued value doesn't matter, we just want to count successful enqueues and dequeues, so we can use a constant
+    // value like 0 to make it easier to analyze the queue state if the test fails
+    if (queue_enqueue(ctx->shared->q, 0) == 0) {
       ctx->operations++;
     }
 
@@ -576,7 +580,7 @@ void run_stress_consumer(void *arg) {
   int item;
 
   // runtime
-  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 1) {
+  while (atomic_load_explicit(&ctx->shared->phase, memory_order_acquire) < 2) {
     if (queue_dequeue(ctx->shared->q, &item) == 0) {
       ctx->operations++;
       stress_sink += item; // prevent optimizing away the dequeue
