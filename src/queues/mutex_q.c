@@ -18,7 +18,6 @@ typedef struct mutex_queue {
 static const queue_vtable_t mutex_vtable = {
     .enqueue = mutex_queue_push,
     .dequeue = mutex_queue_pop,
-    .count = mutex_queue_count,
     .destroy = mutex_queue_destroy,
 };
 
@@ -121,16 +120,4 @@ int mutex_queue_pop(queue_t *q, int *item) {
 
   pthread_mutex_unlock(&impl->lock);
   return 0;
-}
-
-int mutex_queue_count(queue_t *q) {
-  mutex_queue_t *impl = (mutex_queue_t *)q->impl;
-  if (!impl) {
-    return -1;
-  }
-
-  pthread_mutex_lock(&impl->lock);
-  int count = impl->count;
-  pthread_mutex_unlock(&impl->lock);
-  return count;
 }

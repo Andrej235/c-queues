@@ -538,9 +538,6 @@ void test_stress_ops_count_run(char *name, int producers, int consumers, float r
     fprintf(stderr, "Mismatch in total operations: enqueues = %s, dequeues = %s\n",
             format_number(total_enqueues, buf1, sizeof(buf1)), format_number(total_dequeues, buf2, sizeof(buf2)));
 
-    int count = queue_count(q);
-    fprintf(stderr, "Queue count: %d\n", count);
-
     exit(EXIT_FAILURE);
   }
 }

@@ -23,7 +23,6 @@ typedef struct lf_mpmc_queue {
 static const queue_vtable_t lf_mpmc_vtable = {
     .enqueue = lf_mpmc_push,
     .dequeue = lf_mpmc_pop,
-    .count = lf_mpmc_count,
     .destroy = lf_mpmc_destroy,
 };
 
@@ -141,15 +140,4 @@ int lf_mpmc_pop(queue_t *q, int *item) {
       return 0;
     }
   }
-}
-
-int lf_mpmc_count(queue_t *q) {
-  lf_mpmc_queue_t *impl = (lf_mpmc_queue_t *)q->impl;
-  if (!impl) {
-    return -1;
-  }
-
-  size_t head = atomic_load_explicit(&impl->head, memory_order_acquire);
-  size_t tail = atomic_load_explicit(&impl->tail, memory_order_acquire);
-  return head - tail;
 }

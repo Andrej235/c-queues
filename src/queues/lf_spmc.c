@@ -23,7 +23,6 @@ typedef struct lf_spmc_queue {
 static const queue_vtable_t lf_spmc_vtable = {
     .enqueue = lf_spmc_push,
     .dequeue = lf_spmc_pop,
-    .count = lf_spmc_count,
     .destroy = lf_spmc_destroy,
 };
 
@@ -131,15 +130,4 @@ int lf_spmc_pop(queue_t *q, int *item) {
       return 0;
     }
   }
-}
-
-int lf_spmc_count(queue_t *q) {
-  lf_spmc_queue_t *impl = (lf_spmc_queue_t *)q->impl;
-  if (!impl) {
-    return -1;
-  }
-
-  size_t head = atomic_load_explicit(&impl->head, memory_order_acquire);
-  size_t tail = atomic_load_explicit(&impl->tail, memory_order_acquire);
-  return head - tail;
 }
