@@ -1,7 +1,6 @@
 #include "lf_mpmc.h"
 
 #include <inttypes.h>
-#include <stdalign.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -10,14 +9,20 @@
 
 typedef struct {
   int value;
-  alignas(64) atomic_size_t seq; // used to determine if node is ready for push or pop
+  atomic_size_t seq; // used to determine if node is ready for push or pop
 } lf_mpmc_queue_node_t;
 
 typedef struct lf_mpmc_queue {
+  char pad0[64];
   lf_mpmc_queue_node_t *buffer;
-  alignas(64) size_t capacity;    // maximum number of items buffer can hold
-  alignas(64) atomic_size_t head; // index to push to
-  alignas(64) atomic_size_t tail; // index to pop from
+  size_t buffer_mask; // maximum number of items buffer can hold - 1, used for wrapping indices
+  char pad1[64];
+
+  atomic_size_t head; // index to push to
+  char pad2[64];
+
+  atomic_size_t tail; // index to pop from
+  char pad3[64];
 } lf_mpmc_queue_t;
 
 static const queue_vtable_t lf_mpmc_vtable = {
@@ -53,7 +58,7 @@ queue_t *lf_mpmc_create(size_t capacity) {
     return NULL;
   }
 
-  imp->capacity = capacity;
+  imp->buffer_mask = capacity - 1;
   atomic_init(&imp->head, 0);
   atomic_init(&imp->tail, 0);
 
@@ -85,8 +90,8 @@ int lf_mpmc_push(queue_t *q, int item) {
   }
 
   while (1) { // loop until success or full
-    size_t head = atomic_load_explicit(&impl->head, memory_order_acquire);
-    lf_mpmc_queue_node_t *node = &impl->buffer[head & (impl->capacity - 1)];
+    size_t head = atomic_load_explicit(&impl->head, memory_order_relaxed);
+    lf_mpmc_queue_node_t *node = &impl->buffer[head & impl->buffer_mask];
 
     size_t seq = atomic_load_explicit(&node->seq, memory_order_acquire);
     intptr_t diff = (intptr_t)seq - (intptr_t)head;
@@ -100,7 +105,7 @@ int lf_mpmc_push(queue_t *q, int item) {
     }
 
     // try to claim index
-    if (atomic_compare_exchange_weak_explicit(&impl->head, &head, head + 1, memory_order_acq_rel, memory_order_acquire)) {
+    if (atomic_compare_exchange_weak_explicit(&impl->head, &head, head + 1, memory_order_acq_rel, memory_order_relaxed)) {
       node->value = item;
 
       atomic_store_explicit(&node->seq, head + 1, memory_order_release);
@@ -117,8 +122,8 @@ int lf_mpmc_pop(queue_t *q, int *item) {
   }
 
   while (1) { // loop until empty or successful pop
-    size_t tail = atomic_load_explicit(&impl->tail, memory_order_acquire);
-    lf_mpmc_queue_node_t *node = &impl->buffer[tail & (impl->capacity - 1)];
+    size_t tail = atomic_load_explicit(&impl->tail, memory_order_relaxed);
+    lf_mpmc_queue_node_t *node = &impl->buffer[tail & impl->buffer_mask];
 
     size_t seq = atomic_load_explicit(&node->seq, memory_order_acquire);
     intptr_t diff = (intptr_t)seq - (intptr_t)tail - 1;
@@ -132,10 +137,10 @@ int lf_mpmc_pop(queue_t *q, int *item) {
     }
 
     // try to claim the index
-    if (atomic_compare_exchange_weak_explicit(&impl->tail, &tail, tail + 1, memory_order_acq_rel, memory_order_acquire)) {
+    if (atomic_compare_exchange_weak_explicit(&impl->tail, &tail, tail + 1, memory_order_acq_rel, memory_order_relaxed)) {
       *item = node->value;
 
-      atomic_store_explicit(&node->seq, tail + impl->capacity, memory_order_release);
+      atomic_store_explicit(&node->seq, tail + impl->buffer_mask + 1, memory_order_release);
 
       return 0;
     }

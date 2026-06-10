@@ -1,7 +1,6 @@
 #include "lf_spmc.h"
 
 #include <inttypes.h>
-#include <stdalign.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -10,14 +9,20 @@
 
 typedef struct {
   int value;
-  alignas(64) atomic_size_t seq; // used to determine if node is ready for push or pop
+  atomic_size_t seq; // used to determine if node is ready for push or pop
 } lf_spmc_queue_node_t;
 
 typedef struct lf_spmc_queue {
+  char pad0[64];
   lf_spmc_queue_node_t *buffer;
-  alignas(64) size_t capacity;    // maximum number of items buffer can hold
-  alignas(64) atomic_size_t head; // index to push to
-  alignas(64) atomic_size_t tail; // index to pop from
+  size_t buffer_mask; // maximum number of items buffer can hold - 1, used for wrapping indices
+  char pad1[64];
+
+  atomic_size_t head; // index to push to
+  char pad2[64];
+
+  atomic_size_t tail; // index to pop from
+  char pad3[64];
 } lf_spmc_queue_t;
 
 static const queue_vtable_t lf_spmc_vtable = {
@@ -53,7 +58,7 @@ queue_t *lf_spmc_create(size_t capacity) {
     return NULL;
   }
 
-  imp->capacity = capacity;
+  imp->buffer_mask = capacity - 1;
   atomic_init(&imp->head, 0);
   atomic_init(&imp->tail, 0);
 
@@ -85,7 +90,7 @@ int lf_spmc_push(queue_t *q, int item) {
   }
 
   size_t head = atomic_load_explicit(&impl->head, memory_order_relaxed);
-  lf_spmc_queue_node_t *node = &impl->buffer[head & (impl->capacity - 1)];
+  lf_spmc_queue_node_t *node = &impl->buffer[head & impl->buffer_mask];
 
   size_t seq = atomic_load_explicit(&node->seq, memory_order_acquire);
   intptr_t diff = (intptr_t)seq - (intptr_t)head;
@@ -107,8 +112,8 @@ int lf_spmc_pop(queue_t *q, int *item) {
   }
 
   while (1) { // loop until empty or successful pop
-    size_t tail = atomic_load_explicit(&impl->tail, memory_order_acquire);
-    lf_spmc_queue_node_t *node = &impl->buffer[tail & (impl->capacity - 1)];
+    size_t tail = atomic_load_explicit(&impl->tail, memory_order_relaxed);
+    lf_spmc_queue_node_t *node = &impl->buffer[tail & impl->buffer_mask];
 
     size_t seq = atomic_load_explicit(&node->seq, memory_order_acquire);
     intptr_t diff = (intptr_t)seq - (intptr_t)tail - 1;
@@ -122,10 +127,10 @@ int lf_spmc_pop(queue_t *q, int *item) {
     }
 
     // try to claim the index
-    if (atomic_compare_exchange_weak_explicit(&impl->tail, &tail, tail + 1, memory_order_acq_rel, memory_order_acquire)) {
+    if (atomic_compare_exchange_weak_explicit(&impl->tail, &tail, tail + 1, memory_order_acq_rel, memory_order_relaxed)) {
       *item = node->value;
 
-      atomic_store_explicit(&node->seq, tail + impl->capacity, memory_order_release);
+      atomic_store_explicit(&node->seq, tail + impl->buffer_mask + 1, memory_order_release);
 
       return 0;
     }
