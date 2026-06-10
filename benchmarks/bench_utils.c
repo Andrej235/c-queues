@@ -5,7 +5,6 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <sched.h>
-#include <stdalign.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -20,19 +19,20 @@
 static void run_producer(void *arg);
 static void run_consumer(void *arg);
 
-static volatile alignas(64) size_t sink; // used to prevent compiler optimizing away the benchmark loops
+static volatile size_t sink; // used to prevent compiler optimizing away the benchmark loops
 
 typedef struct {
-  queue_t *q;                      // queue to benchmark
+  queue_t *q; // queue to benchmark
+
   atomic_int ready_count;          // number of threads that have signaled they are ready
   pthread_barrier_t start_barrier; // used to sync warmup start
-  alignas(64) atomic_int phase;    // 0 = waiting for all threads to be ready, 1 = warmup, 2 = runtime, 3 = stop
+  atomic_int phase;                // 0 = waiting for all threads to be ready, 1 = warmup, 2 = runtime, 3 = stop
 } shared_context_t;
 
 typedef struct {
   shared_context_t *shared;
   int cpu;
-  alignas(64) uint64_t operations; // local to thread, successful enqueue/dequeue operations during runtime
+  uint64_t operations; // local to thread, successful enqueue/dequeue operations during runtime
 } thread_context_t;
 
 void bench_run(char *name, int n_producers, int n_consumers, float warmup_seconds, float runtime_seconds, queue_t *q) {
