@@ -7,6 +7,7 @@ target_sources(tests
     PRIVATE test_spsc.c
     PRIVATE test_spmc.c
     PRIVATE test_mpsc.c
+    PRIVATE test_mpmc.c
 )
 
 target_include_directories(tests PUBLIC

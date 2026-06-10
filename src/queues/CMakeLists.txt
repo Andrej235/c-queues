@@ -7,6 +7,7 @@ target_sources(queues
     PRIVATE lf_spsc.c
     PRIVATE lf_spmc.c
     PRIVATE lf_mpsc.c
+    PRIVATE lf_mpmc.c
 )
 
 target_include_directories(queues PUBLIC

@@ -28,7 +28,7 @@ static void run_test(test_type_t type) {
     break;
 
   case TEST_MPMC:
-    // test_lf_mpmc();
+    test_lf_mpmc();
     break;
 
   default:
