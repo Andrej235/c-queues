@@ -10,4 +10,7 @@ void bench_lf_spmc();
 void bench_mutex_mpsc();
 void bench_lf_mpsc();
 
+void bench_mutex_mpmc();
+void bench_lf_mpmc();
+
 #endif // BENCH_H

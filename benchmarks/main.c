@@ -52,9 +52,11 @@ static void run_benchmark(benchmark_type_t type) {
     break;
 
   case BENCH_MUTEX_MPMC:
+    bench_mutex_mpmc();
     break;
 
   case BENCH_LF_MPMC:
+    bench_lf_mpmc();
     break;
 
   default:
