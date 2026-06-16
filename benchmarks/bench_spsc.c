@@ -7,6 +7,6 @@
 
 void bench_lf_spsc() {
   queue_t *q = lf_spsc_create(1024);
-  bench_run("Lock-Free SPSC", 1, 1, 3, 5, q);
+  bench_throughput_run("Lock-Free SPSC", 1, 1, 3, 5, q);
   queue_destroy(q);
 }

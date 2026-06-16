@@ -16,8 +16,10 @@
 #include "queue.h"
 #include "thread_pinning.h"
 
-static void run_producer(void *arg);
-static void run_consumer(void *arg);
+#pragma region Throughput
+
+static void bench_throughput_run_producer(void *arg);
+static void bench_throughput_run_consumer(void *arg);
 
 static volatile size_t sink; // used to prevent compiler optimizing away the benchmark loops
 
@@ -27,15 +29,16 @@ typedef struct {
   atomic_int ready_count;          // number of threads that have signaled they are ready
   pthread_barrier_t start_barrier; // used to sync warmup start
   atomic_int phase;                // 0 = waiting for all threads to be ready, 1 = warmup, 2 = runtime, 3 = stop
-} shared_context_t;
+} throughput_shared_context_t;
 
 typedef struct {
-  shared_context_t *shared;
+  throughput_shared_context_t *shared;
   int cpu;
   uint64_t operations; // local to thread, successful enqueue/dequeue operations during runtime
-} thread_context_t;
+} throughput_thread_context_t;
 
-void bench_run(char *name, int n_producers, int n_consumers, float warmup_seconds, float runtime_seconds, queue_t *q) {
+void bench_throughput_run(char *name, int n_producers, int n_consumers, float warmup_seconds, float runtime_seconds,
+                          queue_t *q) {
   if (runtime_seconds <= 0) {
     fprintf(stderr, "Runtime seconds must be greater than 0\n");
     exit(EXIT_FAILURE);
@@ -69,7 +72,7 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   printf("Producers: %d, Consumers: %d\n", n_producers, n_consumers);
   printf("Time: %.1fs warmup, %.1fs runtime\n", warmup_seconds, runtime_seconds);
 
-  shared_context_t *shared = malloc(sizeof(shared_context_t));
+  throughput_shared_context_t *shared = malloc(sizeof(throughput_shared_context_t));
   if (shared == NULL) {
     fprintf(stderr, "Failed to allocate shared context\n");
     exit(EXIT_FAILURE);
@@ -80,8 +83,8 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   atomic_init(&shared->ready_count, 0);
   atomic_init(&shared->phase, 0);
 
-  thread_context_t *producers = malloc(sizeof(thread_context_t) * n_producers);
-  thread_context_t *consumers = malloc(sizeof(thread_context_t) * n_consumers);
+  throughput_thread_context_t *producers = malloc(sizeof(throughput_thread_context_t) * n_producers);
+  throughput_thread_context_t *consumers = malloc(sizeof(throughput_thread_context_t) * n_consumers);
   pthread_t *threads = malloc(sizeof(pthread_t) * (n_producers + n_consumers));
 
   if (producers == NULL || consumers == NULL) {
@@ -96,7 +99,7 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
     producers[i].cpu = i % cpu_count;
 
     pthread_t thread;
-    if (pthread_create(&thread, NULL, (void *(*)(void *))run_producer, &producers[i]) != 0) {
+    if (pthread_create(&thread, NULL, (void *(*)(void *))bench_throughput_run_producer, &producers[i]) != 0) {
       fprintf(stderr, "Failed to create producer thread\n");
       exit(EXIT_FAILURE);
     }
@@ -108,7 +111,8 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
     consumers[i].operations = 0;
     consumers[i].cpu = (n_producers + i) % cpu_count;
 
-    if (pthread_create(&threads[n_producers + i], NULL, (void *(*)(void *))run_consumer, &consumers[i]) != 0) {
+    if (pthread_create(&threads[n_producers + i], NULL, (void *(*)(void *))bench_throughput_run_consumer, &consumers[i]) !=
+        0) {
       fprintf(stderr, "Failed to create consumer thread\n");
       exit(EXIT_FAILURE);
     }
@@ -154,8 +158,8 @@ void bench_run(char *name, int n_producers, int n_consumers, float warmup_second
   free(shared);
 }
 
-static void run_producer(void *arg) {
-  thread_context_t *ctx = (thread_context_t *)arg;
+static void bench_throughput_run_producer(void *arg) {
+  throughput_thread_context_t *ctx = (throughput_thread_context_t *)arg;
   pin_thread(ctx->cpu);
 
   // signal ready
@@ -180,8 +184,8 @@ static void run_producer(void *arg) {
   }
 }
 
-static void run_consumer(void *arg) {
-  thread_context_t *ctx = (thread_context_t *)arg;
+static void bench_throughput_run_consumer(void *arg) {
+  throughput_thread_context_t *ctx = (throughput_thread_context_t *)arg;
   pin_thread(ctx->cpu);
 
   // signal ready
@@ -205,3 +209,13 @@ static void run_consumer(void *arg) {
     }
   }
 }
+
+#pragma endregion
+
+#pragma region Nops
+
+void bench_nops_run(char *name, int n_producers, int n_consumers, float warmup_seconds, int runtime_operations, queue_t *q) {
+  exit(1); // not implemented yet
+}
+
+#pragma endregion
